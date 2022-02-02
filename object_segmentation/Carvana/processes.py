@@ -36,20 +36,9 @@ def train(args, labeled, resume_from, ckpt_file):
     )
     training_data = Subset(traindataset, labeled)
     n_train = len(training_data)
-    # valdataset = BasicDataset(
-    #     args["VALIMAGEDATA_DIR"], args["VALLABEL_DIRECTORY"], img_scale
-    # )
     train_loader = DataLoader(
         training_data, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True
     )
-    # val_loader = DataLoader(
-    #     valdataset,
-    #     batch_size=batch_size,
-    #     shuffle=False,
-    #     num_workers=8,
-    #     pin_memory=True,
-    #     drop_last=True,
-    # )
     global_step = 0
     net = UNet(n_channels=3, n_classes=1, bilinear=True)
     net.to(device=device)
