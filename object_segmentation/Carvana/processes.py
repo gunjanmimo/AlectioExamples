@@ -34,22 +34,22 @@ def train(args, labeled, resume_from, ckpt_file):
     traindataset = BasicDataset(
         args["TRAINIMAGEDATA_DIR"], args["TRAINLABEL_DIRECTORY"], img_scale
     )
-    train = Subset(traindataset, labeled)
-    n_train = len(train)
-    valdataset = BasicDataset(
-        args["VALIMAGEDATA_DIR"], args["VALLABEL_DIRECTORY"], img_scale
-    )
+    training_data = Subset(traindataset, labeled)
+    n_train = len(training_data)
+    # valdataset = BasicDataset(
+    #     args["VALIMAGEDATA_DIR"], args["VALLABEL_DIRECTORY"], img_scale
+    # )
     train_loader = DataLoader(
-        train, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True
+        training_data, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True
     )
-    val_loader = DataLoader(
-        valdataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=8,
-        pin_memory=True,
-        drop_last=True,
-    )
+    # val_loader = DataLoader(
+    #     valdataset,
+    #     batch_size=batch_size,
+    #     shuffle=False,
+    #     num_workers=8,
+    #     pin_memory=True,
+    #     drop_last=True,
+    # )
     global_step = 0
     net = UNet(n_channels=3, n_classes=1, bilinear=True)
     net.to(device=device)
@@ -65,7 +65,7 @@ def train(args, labeled, resume_from, ckpt_file):
         criterion = nn.BCEWithLogitsLoss()
 
     writer = SummaryWriter(
-        comment=f"LR_{lr}_BS_{batch_size}_SCALE_{img_scale}")
+        comment=f"LR_{lr}BS{batch_size}SCALE{img_scale}")
 
     predictions = {}
     predix = 0
@@ -129,7 +129,7 @@ def test(args, ckpt_file):
         testdataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=8,
+        num_workers=0,
         pin_memory=True,
         drop_last=True,
     )
@@ -141,7 +141,8 @@ def test(args, ckpt_file):
     test_count = 0
     with tqdm(total=n_val, desc="Validation round", unit="batch", leave=False) as pbar:
         for batch in val_loader:
-            imgs, true_masks = batch["image"], batch["mask"]
+            imgs = batch["image"]
+            true_masks = batch["mask"]
             imgs = imgs.to(device=device, dtype=torch.float32)
             mask_type = torch.float32 if net.n_classes == 1 else torch.long
             true_masks = true_masks.to(device=device, dtype=mask_type)
@@ -173,11 +174,12 @@ def infer(args, unlabeled, ckpt_file):
         args["TRAINIMAGEDATA_DIR"], args["TRAINLABEL_DIRECTORY"], img_scale
     )
     unlableddataset = Subset(traindataset, unlabeled)
+
     unlabeled_loader = DataLoader(
         unlableddataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=8,
+        num_workers=0,
         pin_memory=True,
     )
     predix = 0
@@ -219,7 +221,7 @@ def getdatasetstate(args, split="train"):
     batchsize = 1
     loader = DataLoader(dataset, batch_size=batchsize,
                         num_workers=2, shuffle=False)
-    for i, (_, _, paths) in enumerate(loader):
+    for i, paths in enumerate(loader):
         for path in paths:
             if split in path:
                 trainpath[i] = path

@@ -1,23 +1,26 @@
-# -*- coding: utf-8 -*-
+# -- coding: utf-8 --
 """
 Created on Thu May 21 09:28:02 2020
 @author: arun
 """
-
+import os
 from torchvision import datasets
+from torch.utils.data import Dataset
 
-
-class FolderWithPaths(datasets.ImageFolder):
+class FolderWithPaths(Dataset):
     """Custom dataset that includes image file paths. Extends
     torchvision.datasets.ImageFolder
     """
-
-    # override the __getitem__ method. this is the method that dataloader calls
-    def __getitem__(self, index):
-        # this is what ImageFolder normally returns
-        original_tuple = super(FolderWithPaths, self).__getitem__(index)
-        # the image file path
-        path = self.imgs[index][0]
-        # make a new tuple that includes original and the path
-        tuple_with_path = original_tuple + (path,)
-        return tuple_with_path
+    def _init_(self, root, transform=None):
+        self.image_dir = root
+        self.imgs = [image_path for image_path in os.listdir(root)]
+        
+    def _len_(self):
+        return len(self.imgs)
+    
+    # override the _getitem_ method. this is the method that dataloader calls
+    def _getitem_(self, index):
+        img_path = self.imgs[index]
+        
+        # return (index,self.image_dir, os.path.join(self.image_dir, img_path))
+        return os.path.join(self.image_dir, img_path)

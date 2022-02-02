@@ -21,12 +21,9 @@ class BasicDataset(Dataset):
         for file_name in listdir(imgs_dir):
             if not file_name.startswith("."):
                 idx = splitext(file_name)[0]
-                mask_file = glob(masks_dir + idx + "_mask.*")
-                img_file = glob(imgs_dir + idx + ".*")
-                if len(img_file) != len(mask_file):
-                    print("Removing files without masks ", img_file[0])
-                    os.remove(img_file[0])
-                else:
+                mask_file = f"{self.masks_dir}/{idx}_mask.gif"
+                img_file = f"{self.imgs_dir}/{idx}.jpg"
+                if os.path.isfile(mask_file) and os.path.isfile(img_file):
                     self.ids.append(idx)
 
     def __len__(self):
@@ -53,16 +50,10 @@ class BasicDataset(Dataset):
 
     def __getitem__(self, i):
         idx = self.ids[i]
-        mask_file = glob(self.masks_dir + idx + "_mask.*")
-        img_file = glob(self.imgs_dir + idx + ".*")
-        assert (
-            len(mask_file) == 1
-        ), "Either no mask or multiple masks found for the ID {}: {}".format(idx, mask_file)
-        assert (
-            len(img_file) == 1
-        ), "Either no image or multiple images found for the ID {}: {}".format(idx, mask_file)
-        mask = Image.open(mask_file[0])
-        img = Image.open(img_file[0])
+        mask_file = f"{self.masks_dir}/{idx}_mask.gif"
+        img_file = f"{self.imgs_dir}/{idx}.jpg"
+        mask = Image.open(mask_file)
+        img = Image.open(img_file)
 
         assert (
             img.size == mask.size
