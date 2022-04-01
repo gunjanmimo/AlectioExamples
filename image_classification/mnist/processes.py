@@ -1,142 +1,137 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Jun 12 23:52:22 2020
-
-@author: arun
-"""
+import torch
+from torchvision import datasets, transforms
+import torch.nn as nn
+import torch.optim as optim
+from model import CNN_DigitClassifier
+import random
+from tqdm import tqdm
 import os
 import yaml
-import pandas as pd
-import tensorflow as tf
-from utils import *
-from model import digitClassifier
-from tensorflow.examples.tutorials.mnist import input_data
 
-tf.enable_eager_execution()
-tfe = tf.contrib.eager
+# prepare dataset
+transform = transforms.Compose(
+    [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
+)
+train_data = datasets.MNIST(
+    "mnist_data", train=True, download=True, transform=transform
+)
+test_data = datasets.MNIST(
+    "mnist_data", train=False, download=True, transform=transform
+)
 
 
-##### Global variables
-mnist = input_data.read_data_sets("/tmp/data/", one_hot=True)
-NN = digitClassifier(256, 256, 10)
-optimizer = tf.train.AdamOptimizer(learning_rate=args["INITIAL_LR"])
-checkpoint_prefix = os.path.join(args["OUTPUT_DIRECTORY"], "ckpt_0")
-checkpoint = tf.train.Checkpoint(model=NN, optimizer=optimizer)
+# global variables
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = CNN_DigitClassifier().to(device)
+
+learning_rate = 0.01
+momentum = 0.5
+optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
+
+
+def getdatasetstate(args={}):
+    return {k: k for k in range(70000)}
 
 
 def train(args, labeled, resume_from, ckpt_file):
+    labled_data = torch.utils.data.Subset(train_data, labeled)
+    train_dataloader = torch.utils.data.DataLoader(
+        labled_data, batch_size=args["BATCH_SIZE"], shuffle=True
+    )
 
-    labelledimages = mnist.train.images[labeled, ...]
-    labelledclasses = mnist.train.labels[labeled, ...]
+    if resume_from is not None and not args["weightsclear"]:
+        ckpt = torch.load(os.path.join(args["EXPT_DIR"], resume_from))
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
 
-    dataset = tf.data.Dataset.from_tensor_slices((labelledimages, labelledclasses))
+    # loss function
+    cec = nn.CrossEntropyLoss()
+    current_loss = float("inf")
+    for epoch in range(3):
+        for batch_idex, (images, labels) in enumerate(
+            tqdm(train_dataloader, leave=False)
+        ):
+            images = images.to(device)
+            labels = labels.to(device)
+            optimizer.zero_grad()
+            pred = model(images)
+            loss = cec(pred, labels)
+            loss.backward()
+            optimizer.step()
+        print(f"Ending Epoch: {epoch+1} with Loss: {loss.item()}")
+        if loss.item() < current_loss:
+            current_loss = loss.item()
+            if not os.path.isdir(args["EXPT_DIR"]):
+                os.mkdir(args["EXPT_DIR"])
 
-    train_count = labelledimages.shape[0]
-    steps_per_epoch = train_count // args["BATCH_SIZE"]
-    average_loss = 0.0
-    average_acc = 0.0
-    best_acc = 0.0
-
-    grad = tfe.implicit_gradients(loss_fn)
-    dataset = dataset.repeat().batch(args["BATCH_SIZE"]).prefetch(args["BATCH_SIZE"])
-    dataset_iter = tfe.Iterator(dataset)
-
-    for epoch in range(args["train_epochs"]):
-        for step in range(steps_per_epoch):
-            d = dataset_iter.next()
-            x_batch = d[0]
-            y_batch = tf.cast(d[1], dtype=tf.int64)
-            batch_loss = loss_fn(NN, x_batch, y_batch)
-            average_loss += batch_loss
-            batch_accuracy = accuracy_fn(NN, x_batch, y_batch)
-            average_acc += batch_accuracy
-
-            if step == 0:
-                print("Initial loss= {:.9f}".format(average_loss))
-
-            optimizer.apply_gradients(grad(NN, x_batch, y_batch))
-
-            # Display info
-            if (step + 1) % args["DISPLAY_STEP"] == 0 or step == 0:
-                if step > 0:
-                    average_loss /= args["DISPLAY_STEP"]
-                    average_acc /= args["DISPLAY_STEP"]
-                print(
-                    "Epoch:",
-                    "%03d" % (epoch + 1),
-                    "Step:",
-                    "%04d" % (step + 1),
-                    " loss=",
-                    "{:.9f}".format(average_loss),
-                    " accuracy=",
-                    "{:.4f}".format(average_acc),
-                )
-                average_loss = 0.0
-                average_acc = 0.0
-
-        if average_acc > best_acc:
-            best_acc = average_acc
-            checkpoint.save(file_prefix=checkpoint_prefix)
-
-    return args["OUTPUT_DIRECTORY"]
+            print(f"Saving Model to {ckpt_file}")
+            ckpt = {"model": model.state_dict(), "optimizer": optimizer.state_dict()}
+            torch.save(ckpt, os.path.join(args["EXPT_DIR"], ckpt_file + ".pth"))
+    return
 
 
 def test(args, ckpt_file):
-    testX = mnist.test.images
-    testY = mnist.test.labels
-    print("Loading latest checkpoint")
-    checkpoint.restore(tf.train.latest_checkpoint(args["OUTPUT_DIRECTORY"]))
 
-    test_acc = accuracy_fn(NN, testX, testY)
-    print("Testset Accuracy: {:.4f}".format(test_acc))
-    y_pred, y_true = getpreds(NN, testX, testY)
+    ckpt = torch.load(os.path.join(args["EXPT_DIR"], ckpt_file + ".pth"))
+    model.load_state_dict(ckpt["model"])
+    model.eval()
+    test_dataloader = torch.utils.data.DataLoader(
+        test_data, batch_size=args["BATCH_SIZE"], shuffle=False
+    )
+    predictions, targets = [], []
 
-    return {
-        "predictions": y_pred.numpy().reshape(len(y_pred), 1),
-        "labels": y_true.numpy().reshape(len(y_true), 1),
-    }
+    correct, total = 0, 0
+    for images, labels in tqdm(test_dataloader, leave=False):
+        images = images.to(device)
+        labels = labels.to(device)
+        pred = model(images)
+        _, predicted = torch.max(pred.data, 1)
+        predictions.extend(predicted.cpu().numpy().tolist())
+        targets.extend(labels.cpu().numpy().tolist())
+
+        # calculate accuracy
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+    print(f"Accuracy: {correct / len(test_data) * 100} %",)
+    return {"predictions": predictions, "labels": targets}
 
 
 def infer(args, unlabeled, ckpt_file):
+    unlabeled_data = torch.utils.data.Subset(train_data, unlabeled)
+    unlabeled_dataloader = torch.utils.data.DataLoader(
+        unlabeled_data, batch_size=args["BATCH_SIZE"], shuffle=False
+    )
 
-    # Load the last best model
-    print("Loading latest checkpoint")
-    checkpoint.restore(tf.train.latest_checkpoint(args["OUTPUT_DIRECTORY"]))
-    unlabelledimages = mnist.train.images[unlabeled, ...]
-    unlabelledclasses = mnist.train.labels[unlabeled, ...]
-    presoft = NN(unlabelledimages)
-    presoftarr = presoft.numpy().reshape(len(presoft), 1)
+    ckpt = torch.load(os.path.join(args["EXPT_DIR"], ckpt_file + ".pth"))
+    model.load_state_dict(ckpt["model"])
+    model.eval()
+    correct, total, k = 0, 0, 0
+    outputs_fin = {}
+    for i, data in tqdm(enumerate(unlabeled_dataloader), desc="Inferring"):
+        images, labels = data
+        images, labels = images.to(device), labels.to(device)
+        outputs = model(images).data
 
-    predictions = {i: row for i, row in enumerate(presoftarr)}
+        _, predicted = torch.max(outputs, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
 
-    return {"outputs": predictions}
+        for j in range(len(outputs)):
+            outputs_fin[k] = {}
+            outputs_fin[k]["prediction"] = predicted[j].item()
+            outputs_fin[k]["pre_softmax"] = outputs[j].cpu().numpy().tolist()
+            k += 1
 
-
-def getdatasetstate(args, split="train"):
-    columns = ["Label"] + list(range(args["NUM_INPUT"]))
-    if split == "train":
-        train_label_file = "{}mnist_train.csv".format(args["LABEL_DIRECTORY"])
-        dataframe = pd.read_csv(train_label_file)
-        dataframe.columns = columns
-    else:
-        test_label_file = "{}mnist_test.csv".format(args["LABEL_DIRECTORY"])
-        dataframe = pd.read_csv(test_label_file)
-        dataframe.columns = columns
-
-    pathdict = {}
-    for ix, row in dataframe.iterrrows():
-        pathdict[ix] = row[
-            "Label"
-        ]  ######### here index carries the necessary reference
-
-    return pathdict
+    return {"outputs": outputs_fin}
 
 
 if __name__ == "__main__":
-    labeled = list(range(1000))
+    with open("./config.yaml", "r") as stream:
+        args = yaml.safe_load(stream)
+
     resume_from = None
     ckpt_file = "ckpt_0"
 
-    train(labeled=labeled, resume_from=resume_from, ckpt_file=ckpt_file)
-    test(ckpt_file=ckpt_file)
-    infer(unlabeled=[10, 20, 30], ckpt_file=ckpt_file)
+    train(args, random.sample(range(60000), 10000), resume_from, ckpt_file)
+    test_results = test(args, ckpt_file)
+    infer(args, random.sample(range(60000), 1000), ckpt_file)
